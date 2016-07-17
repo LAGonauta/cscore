@@ -1,7 +1,6 @@
 ﻿
 using System;
 using System.Threading;
-using System.Diagnostics;
 
 namespace CSCore.SoundOut.AL
 {
@@ -35,9 +34,8 @@ namespace CSCore.SoundOut.AL
         /// <summary>
         /// Raises when the playback state changed
         /// </summary>
-        public event EventHandler<EventArgs> PlaybackChanged;
+        public event EventHandler<EventArgs> PlaybackChanged; 
 
-        private const int BUFFER_COUNT = 4;
         private readonly ALSource _source;
         private Thread _playbackThread;
         private readonly object _locker;
@@ -45,8 +43,6 @@ namespace CSCore.SoundOut.AL
         private WaveFormat _waveFormat;
         private int _bufferSize;
         private ALFormat _alFormat;
-        private uint[] _buffers;
-        private bool _stopPlaybackThread = false;
 
         /// <summary>
         /// Initializes a new ALPlayback class
@@ -72,10 +68,19 @@ namespace CSCore.SoundOut.AL
         /// Initializes the openal playback
         /// </summary>
         /// <param name="stream">The stream</param>
-        /// <param name="format">The format</param>
-        /// <param name="latency">The latency</param>
-        public void Initialize(IWaveSource stream, WaveFormat format, int latency = 50)
+        public void Initialize(IWaveSource stream)
         {
+            Initialize(stream, 150);
+        }
+
+        /// <summary>
+        /// Initializes the openal playback
+        /// </summary>
+        /// <param name="stream">The stream</param>
+        /// <param name="latency">The latency</param>
+        public void Initialize(IWaveSource stream, int latency)
+        {
+            var format = stream.WaveFormat;   
             _playbackStream = stream;
 			_waveFormat = stream.WaveFormat;
             Latency = latency;
@@ -89,14 +94,14 @@ namespace CSCore.SoundOut.AL
         /// </summary>
         public void Play()
         {
-            lock (_locker)
+            if (PlaybackState == PlaybackState.Stopped)
             {
-                if (PlaybackState == PlaybackState.Stopped)
-                {
-                    _playbackThread = new Thread(PlaybackThread) {IsBackground = true};
-                    _playbackThread.Start();
-                }
-                if (PlaybackState == PlaybackState.Paused)
+                _playbackThread = new Thread(PlaybackThread) {IsBackground = true};
+                _playbackThread.Start();
+            }
+            if (PlaybackState == PlaybackState.Paused)
+            {
+                lock (_locker)
                 {
                     Device.Context.MakeCurrent();
                     ALInterops.alSourcePlay(_source.Id);
@@ -113,26 +118,10 @@ namespace CSCore.SoundOut.AL
         {
             lock (_locker)
             {
-                // we signal to the playback thread to stop
-                _stopPlaybackThread = true;
-
                 Device.Context.MakeCurrent();
-
-                // Wait for the currently playing buffers to finish - this means that we can safely restart the source
-                WaitForBuffersToFinish();
-
                 ALInterops.alSourceStop(_source.Id);
                 PlaybackState = PlaybackState.Stopped;
                 RaisePlaybackChanged();
-
-                #if DEBUG
-                int buffersQueued;
-                ALInterops.alGetSourcei(_source.Id, ALSourceParameters.BuffersQueued, out buffersQueued);
-                Debug.WriteLine("Stopping source, " + buffersQueued + " buffers are still queued");
-                #endif
-
-                // reset the playback thread state
-                _stopPlaybackThread = false;
             }
         }
 
@@ -176,16 +165,9 @@ namespace CSCore.SoundOut.AL
 
             Device.Context.MakeCurrent();
 
-            // Create our buffers if they do not exist
-            if (_buffers == null)
-            {
-                _buffers = CreateBuffers(BUFFER_COUNT);
-            }
+            var buffers = CreateBuffers(4);
 
-            // Fill the buffers - this fills all of them, which is safe because this method
-            // can only be called after WaitForBuffersToFinish(), which ensures that all
-            // our buffers are dequeued from the source
-            FillBuffers(_buffers);
+			FillBuffers(buffers);
 
             ALInterops.alSourcePlay(_source.Id);
 
@@ -193,12 +175,6 @@ namespace CSCore.SoundOut.AL
             {
                 while (_playbackStream.Position < _playbackStream.Length)
                 {
-                    if (_stopPlaybackThread) return;
-
-                    // get finished buffers so we can dequeue them
-                    int finishedBuffersAmount;
-                    ALInterops.alGetSourcei(_source.Id, ALSourceParameters.BuffersProcessed, out finishedBuffersAmount);
-
                     switch (PlaybackState)
                     {
                         case PlaybackState.Paused:
@@ -206,32 +182,29 @@ namespace CSCore.SoundOut.AL
                             continue;
                         case PlaybackState.Stopped:
                             return;
-                        case PlaybackState.Playing:
-                            // sleep if there are no buffers to queue
-                            if (finishedBuffersAmount == 0)
-                            {
-                                Thread.Sleep(Latency);
-                                continue;
-                            }
-
-                            var unqueuedBuffers = UnqueueBuffers(finishedBuffersAmount);
-
-                            // fill the unqueued buffers
-                            FillBuffers(unqueuedBuffers);
-
-                            // restart the source playing if it is stopped
-                            int sourceState;
-                            ALInterops.alGetSourcei(_source.Id, ALSourceParameters.SourceState, out sourceState);
-                            if ((ALSourceState)sourceState == ALSourceState.Stopped)
-                            {
-                                ALInterops.alSourcePlay(_source.Id);
-                            }
-
-                            break;
                     }
 
-                    // update the position
+                    int finishedBuffersAmount;
+                    ALInterops.alGetSourcei(_source.Id, ALSourceParameters.BuffersProcessed, out finishedBuffersAmount);
+
+                    if (finishedBuffersAmount == 0)
+                    {
+                        Thread.Sleep(Latency);
+                        continue;
+                    }
+
+					var unqueuedBuffers = UnqueueBuffers(finishedBuffersAmount);
+
+					FillBuffers(unqueuedBuffers);
+
                     Position = _playbackStream.Position / _waveFormat.BytesPerSecond * 1000;
+
+                    int sourceState;
+                    ALInterops.alGetSourcei(_source.Id, ALSourceParameters.SourceState, out sourceState);
+                    if ((ALSourceState)sourceState == ALSourceState.Stopped)
+                    {
+                        ALInterops.alSourcePlay(_source.Id);
+                    }
                 }
             }
             catch (Exception ex)
@@ -241,31 +214,6 @@ namespace CSCore.SoundOut.AL
 
             PlaybackState = PlaybackState.Stopped;
             RaisePlaybackChanged(exception);
-        }
-
-        private void WaitForBuffersToFinish()
-        {
-            while (true)
-            {
-                // get finished buffers so we can dequeue them
-                int finishedBuffersAmount;
-                ALInterops.alGetSourcei(_source.Id, ALSourceParameters.BuffersProcessed, out finishedBuffersAmount);
-
-                // dequeue buffers if there are any
-                UnqueueBuffers(finishedBuffersAmount);
-
-                // we need to wait for the currently queued buffers to finish
-                int queuedBuffers;
-                ALInterops.alGetSourcei(_source.Id, ALSourceParameters.BuffersQueued, out queuedBuffers);
-
-                if (queuedBuffers == 0)
-                {
-                    return;
-                } 
-
-                // Sleep if we are still waiting for buffers to finish
-                Thread.Sleep(10);
-            }
         }
 
         /// <summary>
