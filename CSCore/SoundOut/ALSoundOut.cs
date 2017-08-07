@@ -320,18 +320,15 @@ namespace CSCore.SoundOut
 
                 //wait for the playbackthread to finish
                 _playbackThread.WaitForExit();
-                Debug.WriteLine(0.1);
                 //after the playbackthread finished, release the resources 
                 CleanupResources();
                 //start creating new resources including new context and so on.
                 _playingDevice = Device;
-                Debug.WriteLine(0.2);
                 _context = new ALContext(_playingDevice);
 
                 source = new InterruptDisposingChainSource(source);
                 _volumeSource = new VolumeSource(source.ToSampleSource());
 
-                Debug.WriteLine(0.3);
                 int numberOfBitsPerSample = FindBestBitDepth(source.WaveFormat);
                 _source = _volumeSource.ToWaveSource(numberOfBitsPerSample);
 
@@ -437,7 +434,6 @@ namespace CSCore.SoundOut
             }
             finally
             {
-                Debug.WriteLine("exit");
                 _playbackState = PlaybackState.Stopped;
 
                 if (waitHandle != null)
@@ -487,7 +483,6 @@ namespace CSCore.SoundOut
                     int numberOfProcessedBuffers = _alSource.BuffersProcessed;
                     if (numberOfProcessedBuffers > 0)
                     {
-                        Debug.WriteLine(0.01);
                         //sometimes there are duplicates on window??
                         var finishedBuffers = _alSource.UnqueueBuffers(numberOfProcessedBuffers).Distinct().ToArray();
                         ALException.Try(
@@ -497,7 +492,6 @@ namespace CSCore.SoundOut
                     }
 
                     _alSource.Dispose();
-                    Debug.WriteLine(0.03);
                     _alSource = null;
                 }
             }
@@ -505,7 +499,6 @@ namespace CSCore.SoundOut
             if (Context != null)
             {
                 Context.Dispose();
-                Debug.WriteLine(0.03);
                 _context = null;
             }
 

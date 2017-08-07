@@ -69,10 +69,7 @@ namespace CSCore.SoundOut.AL
         [DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern void alSourceStop(uint sourceId);
 
-        [DllImport("openal32.dll", CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void alSourceRewind(uint sourceId);
-
-        [DllImport("openal32.dll", CallingConvention = CallingConvention.Cdecl)]
+        [DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
         internal static extern void alSourceQueueBuffers(uint sourceId, int number, uint[] bufferIDs);
 
         [DllImport("OpenAL32.dll", CallingConvention = CallingConvention.Cdecl)]
@@ -179,7 +176,7 @@ namespace CSCore.SoundOut.AL
                     lastNull = true;
 
                     strings.Add(Marshal.PtrToStringAnsi(location, i));
-                    location = new IntPtr((long) location + i + 1);
+                    location = new IntPtr((long)location + i + 1);
                     i = -1;
                 }
                 else
